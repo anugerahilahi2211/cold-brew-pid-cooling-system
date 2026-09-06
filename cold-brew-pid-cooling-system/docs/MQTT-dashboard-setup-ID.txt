@@ -1,0 +1,46 @@
+PAKET ONLINE DASHBOARD COLD BREW ESP32
+
+Isi paket:
+1. kontrol_coldbrew_ESP32_MQTT_dashboard.ino
+   Program full ESP32: PID + LCD + RTC + tombol + buzzer + publish MQTT.
+
+2. index.html dan dashboard.html
+   Dashboard web real-time: suhu, setpoint, PWM, sisa waktu, status, grafik suhu, grafik PWM.
+   Untuk Vercel pakai index.html.
+
+LANGKAH PEMAKAIAN:
+
+A. HiveMQ Cloud
+1. Masuk HiveMQ Cloud.
+2. Catat cluster URL, username, dan password.
+3. ESP32 pakai MQTT TLS port 8883.
+4. Dashboard web pakai WSS port 8884.
+
+B. Arduino IDE
+Install library:
+- OneWire
+- DallasTemperature
+- RTClib by Adafruit
+- LiquidCrystal_I2C
+- PubSubClient
+
+Edit di program ESP32:
+const char *WIFI_SSID = "ISI_NAMA_WIFI";
+const char *WIFI_PASS = "ISI_PASSWORD_WIFI";
+const char *MQTT_HOST = "ISI_CLUSTER_HIVEMQ.s1.eu.hivemq.cloud";
+const char *MQTT_USER = "ISI_USERNAME_HIVEMQ";
+const char *MQTT_PASS = "ISI_PASSWORD_HIVEMQ";
+
+C. Dashboard
+Edit index.html atau dashboard.html:
+const MQTT_HOST = "ISI_CLUSTER_HIVEMQ.s1.eu.hivemq.cloud";
+const MQTT_USER = "ISI_USERNAME_HIVEMQ";
+const MQTT_PASS = "ISI_PASSWORD_HIVEMQ";
+
+Buka index.html di browser untuk uji lokal.
+Untuk online, upload folder ini ke GitHub lalu deploy ke Vercel.
+
+CATATAN AMAN:
+- VCC modul tombol active-HIGH harus 3.3V, bukan 5V.
+- MQTT username/password di dashboard static terlihat di browser. Untuk demo TA boleh, untuk produksi gunakan akun khusus read-only atau backend proxy.
+- Kendali PID tetap berjalan di ESP32. Website hanya monitoring, jadi alat tetap aman walaupun internet putus.

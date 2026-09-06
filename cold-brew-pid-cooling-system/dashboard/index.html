@@ -1,0 +1,168 @@
+<!doctype html>
+<html lang="id">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Dashboard Cold Brew ESP32</title>
+  <script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <style>
+    body { margin:0; font-family: Arial, sans-serif; background:#f4f6f8; color:#111827; }
+    header { background:#0f172a; color:white; padding:16px 22px; }
+    header h1 { margin:0; font-size:22px; }
+    header p { margin:4px 0 0; color:#cbd5e1; }
+    main { padding:18px; max-width:1200px; margin:auto; }
+    .grid { display:grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap:12px; }
+    .card { background:white; border-radius:14px; padding:14px; box-shadow:0 4px 18px rgba(15,23,42,.08); }
+    .label { color:#64748b; font-size:13px; }
+    .value { font-size:26px; font-weight:700; margin-top:6px; }
+    .status { display:inline-block; padding:5px 10px; border-radius:999px; font-weight:700; background:#e2e8f0; }
+    .ok { background:#dcfce7; color:#166534; }
+    .warn { background:#fef9c3; color:#854d0e; }
+    .bad { background:#fee2e2; color:#991b1b; }
+    .charts { display:grid; grid-template-columns: 1fr; gap:14px; margin-top:14px; }
+    canvas { width:100%; height:320px; }
+    code { background:#e2e8f0; padding:2px 6px; border-radius:6px; }
+  </style>
+</head>
+<body>
+<header>
+  <h1>Dashboard Monitoring Cold Brew ESP32</h1>
+  <p>Grafik real-time suhu, setpoint, PWM, timer, dan status PID</p>
+</header>
+
+<main>
+  <div class="grid">
+    <div class="card"><div class="label">Koneksi</div><div id="conn" class="value status bad">OFFLINE</div></div>
+    <div class="card"><div class="label">Suhu DS18B20</div><div id="suhu" class="value">-- °C</div></div>
+    <div class="card"><div class="label">Setpoint</div><div id="setpoint" class="value">-- °C</div></div>
+    <div class="card"><div class="label">PWM Peltier</div><div id="pwm" class="value">--</div></div>
+    <div class="card"><div class="label">Sisa Waktu RTC</div><div id="sisa" class="value">--:--:--</div></div>
+    <div class="card"><div class="label">Status</div><div id="status" class="value status">--</div></div>
+  </div>
+
+  <div class="charts">
+    <div class="card"><canvas id="chartSuhu"></canvas></div>
+    <div class="card"><canvas id="chartPWM"></canvas></div>
+  </div>
+
+  <div class="card" style="margin-top:14px">
+    <div class="label">Topic MQTT</div>
+    <div><code id="topicText"></code></div>
+    <div class="label" style="margin-top:8px">Payload terakhir</div>
+    <pre id="lastPayload">Belum ada data.</pre>
+  </div>
+</main>
+
+<script>
+// ================== ISI SESUAI HIVEMQ CLOUD ==================
+const MQTT_HOST = "ISI_CLUSTER_HIVEMQ.s1.eu.hivemq.cloud";
+const MQTT_USER = "ISI_USERNAME_HIVEMQ";
+const MQTT_PASS = "ISI_PASSWORD_HIVEMQ";
+const MQTT_TOPIC = "gerry/coldbrew/data";
+
+// HiveMQ Cloud WebSocket aman memakai port 8884.
+// Jika tidak tersambung, coba hapus /mqtt menjadi: wss://${MQTT_HOST}:8884
+const MQTT_URL = `wss://${MQTT_HOST}:8884/mqtt`;
+
+const MAX_POINTS = 80;
+document.getElementById('topicText').textContent = MQTT_TOPIC;
+
+function makeLineChart(ctx, title, series) {
+  return new Chart(ctx, {
+    type: 'line',
+    data: { labels: [], datasets: series },
+    options: {
+      responsive: true,
+      animation: false,
+      interaction: { mode: 'index', intersect: false },
+      plugins: { title: { display: true, text: title }, legend: { display: true } },
+      scales: { x: { title: { display: true, text: 'Waktu' } } }
+    }
+  });
+}
+
+const chartSuhu = makeLineChart(document.getElementById('chartSuhu'), 'Grafik Suhu Aktual dan Setpoint', [
+  { label: 'Suhu aktual (°C)', data: [], borderWidth: 2, pointRadius: 0 },
+  { label: 'Setpoint (°C)', data: [], borderWidth: 2, pointRadius: 0 }
+]);
+
+const chartPWM = makeLineChart(document.getElementById('chartPWM'), 'Grafik PWM Peltier', [
+  { label: 'PWM', data: [], borderWidth: 2, pointRadius: 0 }
+]);
+
+function pushData(chart, label, values) {
+  chart.data.labels.push(label);
+  values.forEach((v, i) => chart.data.datasets[i].data.push(v));
+  if (chart.data.labels.length > MAX_POINTS) {
+    chart.data.labels.shift();
+    chart.data.datasets.forEach(ds => ds.data.shift());
+  }
+  chart.update();
+}
+
+function setStatusClass(el, text) {
+  el.className = 'value status';
+  if (text === 'RUNNING' || text === 'DEKAT_SETPOINT') el.classList.add('ok');
+  else if (text === 'OFF' || text === '--') el.classList.add('warn');
+  else el.classList.add('bad');
+}
+
+const client = mqtt.connect(MQTT_URL, {
+  username: MQTT_USER,
+  password: MQTT_PASS,
+  clientId: 'web-coldbrew-' + Math.random().toString(16).slice(2),
+  clean: true,
+  reconnectPeriod: 2000,
+  connectTimeout: 10000
+});
+
+client.on('connect', () => {
+  const el = document.getElementById('conn');
+  el.textContent = 'ONLINE';
+  el.className = 'value status ok';
+  client.subscribe(MQTT_TOPIC);
+});
+
+client.on('reconnect', () => {
+  const el = document.getElementById('conn');
+  el.textContent = 'RECONNECT';
+  el.className = 'value status warn';
+});
+
+client.on('error', err => {
+  const el = document.getElementById('conn');
+  el.textContent = 'ERROR';
+  el.className = 'value status bad';
+  console.error(err);
+});
+
+client.on('message', (topic, message) => {
+  try {
+    const data = JSON.parse(message.toString());
+    document.getElementById('lastPayload').textContent = JSON.stringify(data, null, 2);
+
+    const suhu = Number(data.suhu);
+    const sp = Number(data.setpoint);
+    const pwm = Number(data.pwm);
+    const waktuLabel = data.rtc ? data.rtc.split('_').pop() : new Date().toLocaleTimeString('id-ID');
+
+    document.getElementById('suhu').textContent = isFinite(suhu) ? suhu.toFixed(2) + ' °C' : '-- °C';
+    document.getElementById('setpoint').textContent = isFinite(sp) ? sp.toFixed(2) + ' °C' : '-- °C';
+    document.getElementById('pwm').textContent = isFinite(pwm) ? pwm : '--';
+    document.getElementById('sisa').textContent = data.sisa_waktu || '--:--:--';
+
+    const st = data.status || '--';
+    const stEl = document.getElementById('status');
+    stEl.textContent = st;
+    setStatusClass(stEl, st);
+
+    if (isFinite(suhu) && isFinite(sp)) pushData(chartSuhu, waktuLabel, [suhu, sp]);
+    if (isFinite(pwm)) pushData(chartPWM, waktuLabel, [pwm]);
+  } catch (e) {
+    console.error('Payload tidak valid:', message.toString(), e);
+  }
+});
+</script>
+</body>
+</html>
